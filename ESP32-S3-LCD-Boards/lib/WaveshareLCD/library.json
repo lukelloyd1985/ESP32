@@ -1,0 +1,8 @@
+{
+  "name": "WaveshareLCD",
+  "version": "1.0.0",
+  "description": "LovyanGFX display setup for Waveshare ESP32-S3 boards with ST7789 IPS LCDs",
+  "dependencies": { "lovyan03/LovyanGFX": "^1.1.16" },
+  "frameworks": "arduino",
+  "platforms": "espressif32"
+}

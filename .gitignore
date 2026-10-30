@@ -1,0 +1,5 @@
+# Local credentials (copy from secrets.h.example)
+secrets.h
+
+# PlatformIO build output
+.pio/
