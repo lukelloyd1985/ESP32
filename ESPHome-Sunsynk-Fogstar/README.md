@@ -3,14 +3,14 @@
 Read-only ESPHome config that polls a Sunsynk single-phase hybrid inverter (SYNK-8K-SG05LP1, same register map as the 5 kW/8 kW family) over RS485 Modbus RTU and exposes it to Home Assistant. Register addresses and scaling come from the Sunsynk single-phase register definitions in the open-source `sunsynk` Python package.
 
 ## What you get
-- **Battery** (as seen by the inverter): SOC, voltage, current, power, temperature, charge/discharge current limits, BMS-reported SOC and cycle count, energy stored (from `battery_capacity_kwh`).
+- **Battery** (as seen by the inverter): SOC, voltage, current, power, temperature, charge/discharge current limits, BMS-reported SOC and cycle count, energy stored (from the selected battery model and pack count).
 - **Solar:** PV1/PV2 power, voltage, current, and total PV power.
 - **Grid / load / inverter:** grid power, CT power, voltage, frequency, load power, inverter power/voltage/current/frequency, grid connected.
 - **Energy:** daily and lifetime battery charge/discharge, grid import/export, load and PV energy (works with the HA Energy dashboard).
 - **Health:** inverter state, fault flag, three temperatures, and the BMS protocol currently set on the inverter.
 
 ## Fogstar batteries
-Models this is set up for: **FE48-10** (10.24 kWh, 51.2 V 200 Ah) and **FE51.2V-16-LVFB** (16.08 kWh, 51.2 V 314 Ah). Set `battery_capacity_kwh` to match (multiply if you run several). Both ship with an RS485/CAN comms cable.
+Models this is set up for: **FE48-10** (10.24 kWh, 51.2 V 200 Ah) and **FE51.2V-16-LVFB** (16.08 kWh, 51.2 V 314 Ah). In Home Assistant choose your model with the **Battery model** select and set **Battery pack count** if you run several; the **Battery capacity** and **Battery energy stored** sensors follow automatically, and the choice is remembered across reboots. Both ship with an RS485/CAN comms cable.
 
 Fogstar batteries are connected to the inverter by the CAN cable, with the inverter's BMS protocol set to **Pylontech (CAN)** per Fogstar's instructions. The inverter then holds the BMS data in its registers, which is what this config reads, so no extra wiring to the battery is needed. The `BMS protocol` entity shows what the inverter is set to, to confirm lithium comms are active.
 
@@ -36,7 +36,8 @@ Serial settings are 9600 8N1, slave address 1 (the Sunsynk default).
 
 ## Setup
 1. `cp secrets.yaml.example secrets.yaml` and fill it in (`openssl rand -base64 32` for the API key).
-2. Edit `substitutions` in `sunsynk-fogstar.yaml`: battery capacity, board, pins.
+2. Edit `substitutions` in `sunsynk-fogstar.yaml`: board and pins.
+   After the device is added to Home Assistant, set **Battery model** and **Battery pack count**.
 3. `esphome run sunsynk-fogstar.yaml` (first flash over USB, later over WiFi), then add the device in Home Assistant.
 
 ## Notes

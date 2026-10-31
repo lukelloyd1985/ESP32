@@ -10,9 +10,6 @@
 substitutions:
   name: sunsynk
   friendly_name: Sunsynk
-  # Nominal capacity of your Fogstar pack(s) in kWh, used for "Battery energy stored".
-  # FE48-10 (51.2 V 200 Ah) = 10.24, FE51.2V-16-LVFB (51.2 V 314 Ah) = 16.08; multiply for several packs.
-  battery_capacity_kwh: "10.24"
   modbus_address: "1"            # inverter Modbus slave address (Sunsynk default is 1)
   tx_pin: GPIO17                 # ESP32 UART TX -> RS485 module DI
   rx_pin: GPIO16                 # ESP32 UART RX <- RS485 module RO
@@ -645,16 +642,55 @@ sensor:
       return {};
     update_interval: 60s
   - platform: template
+    id: battery_capacity
+    name: "Battery capacity"
+    entity_category: diagnostic
+    device_class: energy_storage
+    unit_of_measurement: kWh
+    accuracy_decimals: 2
+    lambda: |-
+      // Nominal capacity per pack: FE48-10 = 51.2 V x 200 Ah, FE51.2V-16-LVFB = 51.2 V x 314 Ah
+      auto idx = id(battery_model).active_index();
+      if (!idx.has_value() || !id(battery_packs).has_state()) return {};
+      const float per_pack[] = {10.24f, 16.08f};
+      return per_pack[*idx] * id(battery_packs).state;
+    update_interval: 60s
+  - platform: template
     name: "Battery energy stored"
     device_class: energy_storage
     state_class: measurement
     unit_of_measurement: kWh
     accuracy_decimals: 1
     lambda: |-
-      if (id(battery_soc).has_state())
-        return id(battery_soc).state / 100.0f * ${battery_capacity_kwh};
+      if (id(battery_soc).has_state() && id(battery_capacity).has_state())
+        return id(battery_soc).state / 100.0f * id(battery_capacity).state;
       return {};
     update_interval: 60s
+
+select:
+  - platform: template
+    id: battery_model
+    name: "Battery model"
+    entity_category: config
+    options:
+      - "FE48-10"
+      - "FE51.2V-16-LVFB"
+    initial_option: "FE48-10"
+    optimistic: true
+    restore_value: true
+
+number:
+  - platform: template
+    id: battery_packs
+    name: "Battery pack count"
+    entity_category: config
+    min_value: 1
+    max_value: 16
+    step: 1
+    mode: box
+    initial_value: 1
+    optimistic: true
+    restore_value: true
 
 text_sensor:
   - platform: template
