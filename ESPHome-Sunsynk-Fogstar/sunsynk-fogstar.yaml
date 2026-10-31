@@ -1,0 +1,737 @@
+# ESPHome config for a Sunsynk 8K-SG05LP1 hybrid inverter (single phase, 5 kW/8 kW family) with Fogstar
+# batteries connected to the inverter. Read-only: it polls the inverter over RS485 Modbus RTU and
+# publishes sensors to Home Assistant. Register addresses and scaling follow the Sunsynk single-phase
+# (5 kW & 8 kW) register map used by the `sunsynk` Python project.
+#
+# Fogstar packs talk to the inverter over CAN/RS485 (set the inverter's BMS protocol to Pylontech),
+# so the battery values here are the ones the inverter gets from the BMS: SOC, voltage, current,
+# power, temperature, charge/discharge limits. Per-cell data would need a direct BMS connection.
+
+substitutions:
+  name: sunsynk
+  friendly_name: Sunsynk
+  modbus_address: "1"            # inverter Modbus slave address (Sunsynk default is 1)
+  tx_pin: GPIO17                 # ESP32 UART TX -> RS485 module DI
+  rx_pin: GPIO16                 # ESP32 UART RX <- RS485 module RO
+
+esphome:
+  name: ${name}
+  friendly_name: ${friendly_name}
+
+esp32:
+  board: esp32dev                # change for your board, e.g. esp32-s3-devkitc-1
+  framework:
+    type: esp-idf
+
+logger:
+
+api:
+  encryption:
+    key: !secret api_key
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  ap:
+    ssid: "${name} fallback"
+    password: !secret ap_password
+
+captive_portal:
+
+uart:
+  id: rs485_uart
+  tx_pin: ${tx_pin}
+  rx_pin: ${rx_pin}
+  baud_rate: 9600
+  stop_bits: 1
+  data_bits: 8
+  parity: NONE
+
+modbus:
+  id: modbus_bus
+  uart_id: rs485_uart
+  # For an RS485 module with separate DE/RE pins (tie them together), set the direction pin:
+  # flow_control_pin: GPIO4
+  # Auto-direction modules need no flow_control_pin.
+
+modbus_controller:
+  - id: sunsynk
+    modbus_id: modbus_bus
+    address: ${modbus_address}
+    update_interval: 10s
+    command_throttle: 50ms
+    setup_priority: -10
+
+sensor:
+
+  # ---- Battery (as reported to the inverter - includes data from the BMS over CAN/RS485) ----
+  - platform: modbus_controller
+    modbus_controller_id: sunsynk
+    id: battery_soc
+    name: "Battery SOC"
+    address: 184
+    register_type: holding
+    value_type: U_WORD
+    unit_of_measurement: "%"
+    accuracy_decimals: 0
+    device_class: battery
+    state_class: measurement
+  - platform: modbus_controller
+    modbus_controller_id: sunsynk
+    name: "Battery voltage"
+    address: 183
+    register_type: holding
+    value_type: U_WORD
+    unit_of_measurement: V
+    accuracy_decimals: 2
+    device_class: voltage
+    state_class: measurement
+    filters:
+      - multiply: 0.01
+  - platform: modbus_controller
+    modbus_controller_id: sunsynk
+    name: "Battery current"
+    address: 191
+    register_type: holding
+    value_type: S_WORD
+    unit_of_measurement: A
+    accuracy_decimals: 2
+    device_class: current
+    state_class: measurement
+    filters:
+      - multiply: -0.01
+  - platform: modbus_controller
+    modbus_controller_id: sunsynk
+    name: "Battery power"
+    address: 190
+    register_type: holding
+    value_type: S_WORD
+    unit_of_measurement: W
+    accuracy_decimals: 0
+    device_class: power
+    state_class: measurement
+  - platform: modbus_controller
+    modbus_controller_id: sunsynk
+    name: "Battery temperature"
+    address: 182
+    register_type: holding
+    value_type: U_WORD
+    unit_of_measurement: "°C"
+    accuracy_decimals: 1
+    device_class: temperature
+    state_class: measurement
+    filters:
+      - multiply: 0.1
+      - offset: -100
+  - platform: modbus_controller
+    modbus_controller_id: sunsynk
+    name: "Battery charge limit current"
+    address: 314
+    register_type: holding
+    value_type: S_WORD
+    unit_of_measurement: A
+    accuracy_decimals: 0
+    device_class: current
+    state_class: measurement
+    skip_updates: 5
+  - platform: modbus_controller
+    modbus_controller_id: sunsynk
+    name: "Battery discharge limit current"
+    address: 315
+    register_type: holding
+    value_type: S_WORD
+    unit_of_measurement: A
+    accuracy_decimals: 0
+    device_class: current
+    state_class: measurement
+    skip_updates: 5
+  - platform: modbus_controller
+    modbus_controller_id: sunsynk
+    name: "BMS SOC (battery 1)"
+    address: 603
+    register_type: holding
+    value_type: U_WORD
+    unit_of_measurement: "%"
+    accuracy_decimals: 0
+    device_class: battery
+    state_class: measurement
+    skip_updates: 5
+  - platform: modbus_controller
+    modbus_controller_id: sunsynk
+    name: "BMS cycles (battery 1)"
+    address: 611
+    register_type: holding
+    value_type: U_WORD
+    accuracy_decimals: 0
+    state_class: total_increasing
+    skip_updates: 30
+
+  # ---- Solar ----
+  - platform: modbus_controller
+    modbus_controller_id: sunsynk
+    id: pv1_power
+    name: "PV1 power"
+    address: 186
+    register_type: holding
+    value_type: S_WORD
+    unit_of_measurement: W
+    accuracy_decimals: 0
+    device_class: power
+    state_class: measurement
+  - platform: modbus_controller
+    modbus_controller_id: sunsynk
+    id: pv2_power
+    name: "PV2 power"
+    address: 187
+    register_type: holding
+    value_type: S_WORD
+    unit_of_measurement: W
+    accuracy_decimals: 0
+    device_class: power
+    state_class: measurement
+  - platform: modbus_controller
+    modbus_controller_id: sunsynk
+    name: "PV1 voltage"
+    address: 109
+    register_type: holding
+    value_type: U_WORD
+    unit_of_measurement: V
+    accuracy_decimals: 1
+    device_class: voltage
+    state_class: measurement
+    filters:
+      - multiply: 0.1
+  - platform: modbus_controller
+    modbus_controller_id: sunsynk
+    name: "PV1 current"
+    address: 110
+    register_type: holding
+    value_type: U_WORD
+    unit_of_measurement: A
+    accuracy_decimals: 1
+    device_class: current
+    state_class: measurement
+    filters:
+      - multiply: 0.1
+  - platform: modbus_controller
+    modbus_controller_id: sunsynk
+    name: "PV2 voltage"
+    address: 111
+    register_type: holding
+    value_type: U_WORD
+    unit_of_measurement: V
+    accuracy_decimals: 1
+    device_class: voltage
+    state_class: measurement
+    filters:
+      - multiply: 0.1
+  - platform: modbus_controller
+    modbus_controller_id: sunsynk
+    name: "PV2 current"
+    address: 112
+    register_type: holding
+    value_type: U_WORD
+    unit_of_measurement: A
+    accuracy_decimals: 1
+    device_class: current
+    state_class: measurement
+    filters:
+      - multiply: 0.1
+
+  # ---- Grid ----
+  - platform: modbus_controller
+    modbus_controller_id: sunsynk
+    name: "Grid power"
+    address: 169
+    register_type: holding
+    value_type: S_WORD
+    unit_of_measurement: W
+    accuracy_decimals: 0
+    device_class: power
+    state_class: measurement
+  - platform: modbus_controller
+    modbus_controller_id: sunsynk
+    name: "Grid CT power"
+    address: 172
+    register_type: holding
+    value_type: S_WORD
+    unit_of_measurement: W
+    accuracy_decimals: 0
+    device_class: power
+    state_class: measurement
+  - platform: modbus_controller
+    modbus_controller_id: sunsynk
+    name: "Grid voltage"
+    address: 150
+    register_type: holding
+    value_type: U_WORD
+    unit_of_measurement: V
+    accuracy_decimals: 1
+    device_class: voltage
+    state_class: measurement
+    filters:
+      - multiply: 0.1
+  - platform: modbus_controller
+    modbus_controller_id: sunsynk
+    name: "Grid frequency"
+    address: 79
+    register_type: holding
+    value_type: U_WORD
+    unit_of_measurement: Hz
+    accuracy_decimals: 2
+    device_class: frequency
+    state_class: measurement
+    filters:
+      - multiply: 0.01
+
+  # ---- Inverter output and load ----
+  - platform: modbus_controller
+    modbus_controller_id: sunsynk
+    name: "Inverter power"
+    address: 175
+    register_type: holding
+    value_type: S_WORD
+    unit_of_measurement: W
+    accuracy_decimals: 0
+    device_class: power
+    state_class: measurement
+  - platform: modbus_controller
+    modbus_controller_id: sunsynk
+    name: "Inverter voltage"
+    address: 154
+    register_type: holding
+    value_type: U_WORD
+    unit_of_measurement: V
+    accuracy_decimals: 1
+    device_class: voltage
+    state_class: measurement
+    filters:
+      - multiply: 0.1
+  - platform: modbus_controller
+    modbus_controller_id: sunsynk
+    name: "Inverter current"
+    address: 164
+    register_type: holding
+    value_type: S_WORD
+    unit_of_measurement: A
+    accuracy_decimals: 2
+    device_class: current
+    state_class: measurement
+    filters:
+      - multiply: 0.01
+  - platform: modbus_controller
+    modbus_controller_id: sunsynk
+    name: "Inverter frequency"
+    address: 193
+    register_type: holding
+    value_type: U_WORD
+    unit_of_measurement: Hz
+    accuracy_decimals: 2
+    device_class: frequency
+    state_class: measurement
+    filters:
+      - multiply: 0.01
+  - platform: modbus_controller
+    modbus_controller_id: sunsynk
+    name: "Load power"
+    address: 178
+    register_type: holding
+    value_type: S_WORD
+    unit_of_measurement: W
+    accuracy_decimals: 0
+    device_class: power
+    state_class: measurement
+
+  # ---- Temperatures ----
+  - platform: modbus_controller
+    modbus_controller_id: sunsynk
+    name: "DC transformer temperature"
+    address: 90
+    register_type: holding
+    value_type: U_WORD
+    unit_of_measurement: "°C"
+    accuracy_decimals: 1
+    device_class: temperature
+    state_class: measurement
+    skip_updates: 5
+    filters:
+      - multiply: 0.1
+      - offset: -100
+  - platform: modbus_controller
+    modbus_controller_id: sunsynk
+    name: "Radiator temperature"
+    address: 91
+    register_type: holding
+    value_type: U_WORD
+    unit_of_measurement: "°C"
+    accuracy_decimals: 1
+    device_class: temperature
+    state_class: measurement
+    skip_updates: 5
+    filters:
+      - multiply: 0.1
+      - offset: -100
+  - platform: modbus_controller
+    modbus_controller_id: sunsynk
+    name: "Environment temperature"
+    address: 95
+    register_type: holding
+    value_type: U_WORD
+    unit_of_measurement: "°C"
+    accuracy_decimals: 1
+    device_class: temperature
+    state_class: measurement
+    skip_updates: 5
+    filters:
+      - multiply: 0.1
+      - offset: -100
+
+  # ---- Energy today (resets daily) ----
+  - platform: modbus_controller
+    modbus_controller_id: sunsynk
+    name: "Day battery charge"
+    address: 70
+    register_type: holding
+    value_type: U_WORD
+    unit_of_measurement: kWh
+    accuracy_decimals: 1
+    device_class: energy
+    state_class: total_increasing
+    skip_updates: 5
+    filters:
+      - multiply: 0.1
+  - platform: modbus_controller
+    modbus_controller_id: sunsynk
+    name: "Day battery discharge"
+    address: 71
+    register_type: holding
+    value_type: U_WORD
+    unit_of_measurement: kWh
+    accuracy_decimals: 1
+    device_class: energy
+    state_class: total_increasing
+    skip_updates: 5
+    filters:
+      - multiply: 0.1
+  - platform: modbus_controller
+    modbus_controller_id: sunsynk
+    name: "Day grid import"
+    address: 76
+    register_type: holding
+    value_type: U_WORD
+    unit_of_measurement: kWh
+    accuracy_decimals: 1
+    device_class: energy
+    state_class: total_increasing
+    skip_updates: 5
+    filters:
+      - multiply: 0.1
+  - platform: modbus_controller
+    modbus_controller_id: sunsynk
+    name: "Day grid export"
+    address: 77
+    register_type: holding
+    value_type: U_WORD
+    unit_of_measurement: kWh
+    accuracy_decimals: 1
+    device_class: energy
+    state_class: total_increasing
+    skip_updates: 5
+    filters:
+      - multiply: 0.1
+  - platform: modbus_controller
+    modbus_controller_id: sunsynk
+    name: "Day load energy"
+    address: 84
+    register_type: holding
+    value_type: U_WORD
+    unit_of_measurement: kWh
+    accuracy_decimals: 1
+    device_class: energy
+    state_class: total_increasing
+    skip_updates: 5
+    filters:
+      - multiply: 0.1
+  - platform: modbus_controller
+    modbus_controller_id: sunsynk
+    name: "Day PV energy"
+    address: 108
+    register_type: holding
+    value_type: U_WORD
+    unit_of_measurement: kWh
+    accuracy_decimals: 1
+    device_class: energy
+    state_class: total_increasing
+    skip_updates: 5
+    filters:
+      - multiply: 0.1
+
+  # ---- Energy totals (32-bit, low word first) ----
+  - platform: modbus_controller
+    modbus_controller_id: sunsynk
+    name: "Total battery charge"
+    address: 72
+    register_type: holding
+    value_type: U_DWORD_R
+    unit_of_measurement: kWh
+    accuracy_decimals: 1
+    device_class: energy
+    state_class: total_increasing
+    skip_updates: 30
+    filters:
+      - multiply: 0.1
+  - platform: modbus_controller
+    modbus_controller_id: sunsynk
+    name: "Total battery discharge"
+    address: 74
+    register_type: holding
+    value_type: U_DWORD_R
+    unit_of_measurement: kWh
+    accuracy_decimals: 1
+    device_class: energy
+    state_class: total_increasing
+    skip_updates: 30
+    filters:
+      - multiply: 0.1
+  - platform: modbus_controller
+    modbus_controller_id: sunsynk
+    name: "Total grid export"
+    address: 81
+    register_type: holding
+    value_type: U_DWORD_R
+    unit_of_measurement: kWh
+    accuracy_decimals: 1
+    device_class: energy
+    state_class: total_increasing
+    skip_updates: 30
+    filters:
+      - multiply: 0.1
+  - platform: modbus_controller
+    modbus_controller_id: sunsynk
+    name: "Total load energy"
+    address: 85
+    register_type: holding
+    value_type: U_DWORD_R
+    unit_of_measurement: kWh
+    accuracy_decimals: 1
+    device_class: energy
+    state_class: total_increasing
+    skip_updates: 30
+    filters:
+      - multiply: 0.1
+  - platform: modbus_controller
+    modbus_controller_id: sunsynk
+    name: "Total PV energy"
+    address: 96
+    register_type: holding
+    value_type: U_DWORD_R
+    unit_of_measurement: kWh
+    accuracy_decimals: 1
+    device_class: energy
+    state_class: total_increasing
+    skip_updates: 30
+    filters:
+      - multiply: 0.1
+  - platform: modbus_controller
+    modbus_controller_id: sunsynk
+    id: grid_import_lo
+    name: "Total grid import low word"
+    address: 78
+    register_type: holding
+    value_type: U_WORD
+    accuracy_decimals: 0
+    skip_updates: 30
+    internal: true
+  - platform: modbus_controller
+    modbus_controller_id: sunsynk
+    id: grid_import_hi
+    name: "Total grid import high word"
+    address: 80
+    register_type: holding
+    value_type: U_WORD
+    accuracy_decimals: 0
+    skip_updates: 30
+    internal: true
+
+  # ---- Fault registers (used by the Fault binary sensor) ----
+  - platform: modbus_controller
+    modbus_controller_id: sunsynk
+    id: fault1
+    name: "Fault register 1"
+    address: 103
+    register_type: holding
+    value_type: U_WORD
+    accuracy_decimals: 0
+    skip_updates: 2
+    internal: true
+  - platform: modbus_controller
+    modbus_controller_id: sunsynk
+    id: fault2
+    name: "Fault register 2"
+    address: 104
+    register_type: holding
+    value_type: U_WORD
+    accuracy_decimals: 0
+    skip_updates: 2
+    internal: true
+  - platform: modbus_controller
+    modbus_controller_id: sunsynk
+    id: fault3
+    name: "Fault register 3"
+    address: 105
+    register_type: holding
+    value_type: U_WORD
+    accuracy_decimals: 0
+    skip_updates: 2
+    internal: true
+  - platform: modbus_controller
+    modbus_controller_id: sunsynk
+    id: fault4
+    name: "Fault register 4"
+    address: 106
+    register_type: holding
+    value_type: U_WORD
+    accuracy_decimals: 0
+    skip_updates: 2
+    internal: true
+
+  # ---- Raw state registers (decoded by the text sensors below) ----
+  - platform: modbus_controller
+    modbus_controller_id: sunsynk
+    id: inverter_state_raw
+    name: "Inverter state raw"
+    address: 59
+    register_type: holding
+    value_type: U_WORD
+    internal: true
+  - platform: modbus_controller
+    modbus_controller_id: sunsynk
+    id: bms_protocol_raw
+    name: "BMS protocol raw"
+    address: 325
+    register_type: holding
+    value_type: U_WORD
+    skip_updates: 30
+    internal: true
+
+  # ---- Calculated ----
+  - platform: template
+    name: "PV power"
+    device_class: power
+    state_class: measurement
+    unit_of_measurement: W
+    accuracy_decimals: 0
+    lambda: |-
+      if (id(pv1_power).has_state() && id(pv2_power).has_state())
+        return id(pv1_power).state + id(pv2_power).state;
+      return {};
+    update_interval: 10s
+  - platform: template
+    name: "Total grid import"
+    device_class: energy
+    state_class: total_increasing
+    unit_of_measurement: kWh
+    accuracy_decimals: 1
+    lambda: |-
+      if (id(grid_import_lo).has_state() && id(grid_import_hi).has_state())
+        return (((uint32_t) id(grid_import_hi).state << 16) | (uint32_t) id(grid_import_lo).state) * 0.1f;
+      return {};
+    update_interval: 60s
+  - platform: template
+    id: battery_capacity
+    name: "Battery capacity"
+    entity_category: diagnostic
+    device_class: energy_storage
+    unit_of_measurement: kWh
+    accuracy_decimals: 2
+    lambda: |-
+      // Nominal capacity per pack: FE48-10 = 51.2 V x 200 Ah, FE51.2V-16-LVFB = 51.2 V x 314 Ah
+      auto idx = id(battery_model).active_index();
+      if (!idx.has_value() || !id(battery_packs).has_state()) return {};
+      const float per_pack[] = {10.24f, 16.08f};
+      return per_pack[*idx] * id(battery_packs).state;
+    update_interval: 60s
+  - platform: template
+    name: "Battery energy stored"
+    device_class: energy_storage
+    state_class: measurement
+    unit_of_measurement: kWh
+    accuracy_decimals: 1
+    lambda: |-
+      if (id(battery_soc).has_state() && id(battery_capacity).has_state())
+        return id(battery_soc).state / 100.0f * id(battery_capacity).state;
+      return {};
+    update_interval: 60s
+
+select:
+  - platform: template
+    id: battery_model
+    name: "Battery model"
+    entity_category: config
+    options:
+      - "FE48-10"
+      - "FE51.2V-16-LVFB"
+    initial_option: "FE48-10"
+    optimistic: true
+    restore_value: true
+
+number:
+  - platform: template
+    id: battery_packs
+    name: "Battery pack count"
+    entity_category: config
+    min_value: 1
+    max_value: 16
+    step: 1
+    mode: box
+    initial_value: 1
+    optimistic: true
+    restore_value: true
+
+text_sensor:
+  - platform: template
+    name: "Inverter state"
+    lambda: |-
+      if (!id(inverter_state_raw).has_state()) return {};
+      switch ((int) id(inverter_state_raw).state) {
+        case 0: return std::string("standby");
+        case 1: return std::string("selfcheck");
+        case 2: return std::string("ok");
+        case 3: return std::string("alarm");
+        case 4: return std::string("fault");
+        case 5: return std::string("activating");
+        default: return "unknown " + to_string((int) id(inverter_state_raw).state);
+      }
+    update_interval: 10s
+  - platform: template
+    name: "BMS protocol"
+    entity_category: diagnostic
+    lambda: |-
+      if (!id(bms_protocol_raw).has_state()) return {};
+      switch ((int) id(bms_protocol_raw).state) {
+        case 0: return std::string("PYLON CAN");
+        case 12: return std::string("PYLON RS485");
+        case 3: return std::string("DYNESS CAN");
+        case 13: return std::string("VISION CAN");
+        default: return "protocol " + to_string((int) id(bms_protocol_raw).state);
+      }
+    update_interval: 60s
+
+binary_sensor:
+  - platform: modbus_controller
+    modbus_controller_id: sunsynk
+    name: "Grid connected"
+    address: 194
+    register_type: holding
+    bitmask: 0xFFFF
+    device_class: connectivity
+  - platform: template
+    name: "Inverter fault"
+    device_class: problem
+    lambda: |-
+      if (!id(fault1).has_state()) return {};
+      return id(fault1).state != 0 || id(fault2).state != 0 || id(fault3).state != 0 || id(fault4).state != 0;
