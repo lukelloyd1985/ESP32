@@ -11,3 +11,9 @@ PlatformIO + Arduino projects for Waveshare ESP32-S3 boards with ST7789 IPS LCDs
 | [`ESP32-S3-LCD-Name`](ESP32-S3-LCD-Name) | Colour-cycling name scaled to fill the screen |
 | [`ESP32-S3-LCD-Pacman`](ESP32-S3-LCD-Pacman) | Animated Pac-Man and ghost |
 | [`ESP32-S3-LCD-Sketch`](ESP32-S3-LCD-Sketch) | Phone photo of a drawing shown as a picture or line-art animation |
+
+## ESPHome
+
+| Project | What it does |
+|---|---|
+| [`ESPHome-Sunsynk-Fogstar`](ESPHome-Sunsynk-Fogstar) | Read-only Modbus monitoring of a Sunsynk 8K-SG05LP1 inverter and Fogstar batteries in Home Assistant |
