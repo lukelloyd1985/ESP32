@@ -14,7 +14,7 @@ Models this is set up for: **FE48-10** (10.24 kWh, 51.2 V 200 Ah) and **FE51.2V-
 
 Fogstar batteries are connected to the inverter by the CAN cable, with the inverter's BMS protocol set to **Pylontech (CAN)** per Fogstar's instructions. The inverter then holds the BMS data in its registers, which is what this config reads, so no extra wiring to the battery is needed. The `BMS protocol` entity shows what the inverter is set to, to confirm lithium comms are active.
 
-Per-cell voltages, individual pack temperatures and BMS alarms are **not** available this way. They need a direct connection to the battery's BMS (RS485 or Bluetooth), which depends on the BMS inside your Fogstar model Fogstar lists Seplos BMS units on some of its batteries and PACE on others, and I could not confirm which is in the FE48-10 or FE51.2V-16-LVFB: check the BMS label or ask Fogstar.
+Per-cell voltages, individual pack temperatures and BMS alarms are **not** available this way. They need a direct connection to the battery's BMS (RS485 or Bluetooth), which depends on the BMS inside your Fogstar model. Fogstar lists Seplos BMS units on some of its batteries and PACE on others, and I could not confirm which is in the FE48-10 or FE51.2V-16-LVFB: check the BMS label or ask Fogstar.
 
 ## Hardware
 - An ESP32 board.
