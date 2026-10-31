@@ -10,7 +10,9 @@
 substitutions:
   name: sunsynk
   friendly_name: Sunsynk
-  battery_capacity_kwh: "15.5"   # usable-ish capacity of your Fogstar pack(s), used for "Battery energy stored"
+  # Nominal capacity of your Fogstar pack(s) in kWh, used for "Battery energy stored".
+  # FE48-10 (51.2 V 200 Ah) = 10.24, FE51.2V-16-LVFB (51.2 V 314 Ah) = 16.08; multiply for several packs.
+  battery_capacity_kwh: "10.24"
   modbus_address: "1"            # inverter Modbus slave address (Sunsynk default is 1)
   tx_pin: GPIO17                 # ESP32 UART TX -> RS485 module DI
   rx_pin: GPIO16                 # ESP32 UART RX <- RS485 module RO

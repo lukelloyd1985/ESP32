@@ -10,9 +10,11 @@ Read-only ESPHome config that polls a Sunsynk single-phase hybrid inverter (SYNK
 - **Health:** inverter state, fault flag, three temperatures, and the BMS protocol currently set on the inverter.
 
 ## Fogstar batteries
-Fogstar racks/walls are connected to the inverter by the CAN cable, with the inverter's BMS protocol set to **Pylontech (CAN)** per Fogstar's instructions. The inverter then holds the BMS data in its registers, which is what this config reads, so no extra wiring to the battery is needed. The `BMS protocol` entity shows what the inverter is set to, to confirm lithium comms are active.
+Models this is set up for: **FE48-10** (10.24 kWh, 51.2 V 200 Ah) and **FE51.2V-16-LVFB** (16.08 kWh, 51.2 V 314 Ah). Set `battery_capacity_kwh` to match (multiply if you run several). Both ship with an RS485/CAN comms cable.
 
-Per-cell voltages, individual pack temperatures and BMS alarms are **not** available this way. They need a direct connection to the battery's BMS (RS485 or Bluetooth), which depends on the BMS inside your Fogstar model (Fogstar rack batteries have been reported with PACE or Seplos BMS units).
+Fogstar batteries are connected to the inverter by the CAN cable, with the inverter's BMS protocol set to **Pylontech (CAN)** per Fogstar's instructions. The inverter then holds the BMS data in its registers, which is what this config reads, so no extra wiring to the battery is needed. The `BMS protocol` entity shows what the inverter is set to, to confirm lithium comms are active.
+
+Per-cell voltages, individual pack temperatures and BMS alarms are **not** available this way. They need a direct connection to the battery's BMS (RS485 or Bluetooth), which depends on the BMS inside your Fogstar model Fogstar lists Seplos BMS units on some of its batteries and PACE on others, and I could not confirm which is in the FE48-10 or FE51.2V-16-LVFB: check the BMS label or ask Fogstar.
 
 ## Hardware
 - An ESP32 board.
