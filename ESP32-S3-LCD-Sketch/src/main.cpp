@@ -22,6 +22,10 @@ uint8_t *mask = nullptr;  // 1 = ink
 bool haveImage = false;
 Mode mode = BOIL;
 uint16_t hueLut[360];
+// Scratch buffers sized from the screen width in setup(), so any supported panel fits.
+static const int STRIP_ROWS = 16;  // rows read/rendered and pushed to the panel per SPI transfer
+uint16_t *strip = nullptr;         // W * STRIP_ROWS pixels, shared by showPicture() and drawArt()
+uint16_t *rainbowRow = nullptr;    // per-frame colour for each column (rainbow mode)
 String ipText;
 String apName;   // set only when running as our own access point
 String hostName;
@@ -60,11 +64,11 @@ void showMessage(const char *l1, const char *l2 = "", const char *l3 = "") {
 void showPicture() {
   File f = LittleFS.open(IMAGE_PATH, "r");
   if (!f || f.size() != imageBytes()) { showMessage("No picture yet", apName.c_str(), ipText.c_str()); return; }
-  static uint16_t row[640];
   lcd.startWrite();
-  for (int y = 0; y < H; y++) {
-    f.read((uint8_t *)row, W * 2);
-    lcd.pushImage(0, y, W, 1, row);
+  for (int y = 0; y < H; y += STRIP_ROWS) {  // a few rows per flash read and per SPI transfer
+    int rows = min(STRIP_ROWS, H - y);
+    f.read((uint8_t *)strip, (size_t)rows * W * 2);
+    lcd.pushImage(0, y, W, rows, strip);
   }
   lcd.endWrite();
   f.close();
@@ -72,13 +76,10 @@ void showPicture() {
 
 // Ripple offsets for the line boil: (int)(1.5 * sin) over one period, indexed 0..255.
 static int8_t rippleLut[256];
-static const int STRIP_ROWS = 16;  // rows converted and pushed to the panel per SPI transfer
-static uint16_t rainbowRow[640];   // per-frame colour for each column (rainbow mode)
 
 // One frame of a line-art animation. Ink pixels get the pencil/rainbow colour, the rest the background.
 // Rows are rendered into a small strip and pushed STRIP_ROWS at a time rather than one SPI transfer per row.
 void drawArt(Mode m, uint32_t frame) {
-  static uint16_t strip[640 * STRIP_ROWS];
   const uint16_t paper = 0xFFFF, pencil = 0x1082;
   const uint16_t offColor = (m == RAINBOW) ? TFT_BLACK : paper;
   int reveal = 0;
@@ -195,6 +196,9 @@ void setup() {
   lcd.setBrightness(200);
   W = lcd.width();
   H = lcd.height();
+  strip = (uint16_t *)malloc((size_t)W * STRIP_ROWS * 2);
+  rainbowRow = (uint16_t *)malloc((size_t)W * 2);
+  if (!strip || !rainbowRow) { Serial.println("Out of memory"); while (true) delay(1000); }
   for (int i = 0; i < 360; i++) {
     float h = i / 60.0f, x = 1 - fabsf(fmodf(h, 2) - 1);
     float r = 0, g = 0, b = 0;
