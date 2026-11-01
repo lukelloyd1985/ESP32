@@ -5,6 +5,12 @@
 //   -DBOARD_LCD_169   ESP32-S3-Touch-LCD-1.69      240x280  (SKU WAV-27932)
 //   -DBOARD_LCD_2     ESP32-S3-LCD-2               240x320  (SKU WAV-30306)
 //   -DBOARD_LCD_28    ESP32-S3-Touch-LCD-2.8       240x320  (SKU WAV-30223)
+//
+// SPI write clock defaults to 80 MHz (the ESP32-S3 maximum), roughly double the previous 40 MHz. If a panel
+// shows noise or glitches, drop it with a build flag, e.g. -DLCD_SPI_HZ=40000000.
+#ifndef LCD_SPI_HZ
+#define LCD_SPI_HZ 80000000
+#endif
 #define LGFX_USE_V1
 #include <LovyanGFX.hpp>
 
@@ -43,7 +49,7 @@ class LGFX : public lgfx::LGFX_Device {
       auto c = _bus.config();
       c.spi_host = SPI3_HOST;
       c.spi_mode = 0;
-      c.freq_write = 40000000;
+      c.freq_write = LCD_SPI_HZ;
       c.pin_sclk = BOARD.sclk;
       c.pin_mosi = BOARD.mosi;
       c.pin_miso = -1;  // write-only; avoids clashing with the SD card on shared pins
