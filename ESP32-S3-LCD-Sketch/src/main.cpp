@@ -32,12 +32,6 @@ static const char *MODE_PATH = "/mode.txt";
 size_t imageBytes() { return (size_t)W * H * 2; }
 size_t maskBytes() { return ((size_t)W * H + 7) / 8; }
 
-inline bool ink(int x, int y) {
-  if (x < 0) x = 0; else if (x >= W) x = W - 1;
-  size_t i = (size_t)y * W + x;
-  return mask[i >> 3] & (0x80 >> (i & 7));
-}
-
 void saveMode() {
   File f = LittleFS.open(MODE_PATH, "w");
   if (f) { f.write((uint8_t)mode); f.close(); }
@@ -76,28 +70,66 @@ void showPicture() {
   f.close();
 }
 
-// One frame of a line-art animation. ink pixels get lineColor(x), the rest bg.
+// Ripple offsets for the line boil: (int)(1.5 * sin) over one period, indexed 0..255.
+static int8_t rippleLut[256];
+static const int STRIP_ROWS = 16;  // rows converted and pushed to the panel per SPI transfer
+static uint16_t rainbowRow[640];   // per-frame colour for each column (rainbow mode)
+
+// One frame of a line-art animation. Ink pixels get the pencil/rainbow colour, the rest the background.
+// Rows are rendered into a small strip and pushed STRIP_ROWS at a time rather than one SPI transfer per row.
 void drawArt(Mode m, uint32_t frame) {
-  static uint16_t row[640];
+  static uint16_t strip[640 * STRIP_ROWS];
   const uint16_t paper = 0xFFFF, pencil = 0x1082;
+  const uint16_t offColor = (m == RAINBOW) ? TFT_BLACK : paper;
   int reveal = 0;
   if (m == DRAWON) {
     int total = W + H, drawFrames = 90, holdFrames = 60;
     int t = frame % (drawFrames + holdFrames);
     reveal = t >= drawFrames ? total : total * t / drawFrames;
   }
+  if (m == RAINBOW)
+    for (int x = 0; x < W; x++) rainbowRow[x] = hueLut[(x * 2 + frame * 6) % 360];
+
+  // Phase of the slow ripple in 1/256ths of a turn: sin(y * 0.12 + frame * 0.25).
+  const int phaseFrame = (int)((frame % 4096) * (0.25f * 256 / (2 * PI)));
+  const float phasePerRow = 0.12f * 256 / (2 * PI);
+  const uint32_t jitSeed = (frame / 2) * 7919u;
+
   lcd.startWrite();
-  for (int y = 0; y < H; y++) {
-    // "Line boil": the whole drawing jitters by a pixel or two every other frame, with a slow ripple.
-    int jit = (int)(((frame / 2) * 7919u + (y / 6) * 104729u) % 3) - 1;
-    int dx = jit + (int)(1.5f * sinf(y * 0.12f + frame * 0.25f));
-    for (int x = 0; x < W; x++) {
-      bool on = ink(x - dx, y);
-      if (m == DRAWON && x + y > reveal) on = false;
-      if (m == RAINBOW) row[x] = on ? hueLut[(x * 2 + frame * 6) % 360] : TFT_BLACK;
-      else row[x] = on ? pencil : paper;
+  for (int y0 = 0; y0 < H; y0 += STRIP_ROWS) {
+    int rows = min(STRIP_ROWS, H - y0);
+    for (int r = 0; r < rows; r++) {
+      int y = y0 + r;
+      uint16_t *row = strip + r * W;
+      // "Line boil": the whole drawing jitters by a pixel or two every other frame, with a slow ripple.
+      int jit = (int)((jitSeed + (y / 6) * 104729u) % 3) - 1;
+      int dx = jit + rippleLut[(phaseFrame + (int)(y * phasePerRow)) & 255];
+
+      // Columns [0, limit) may show ink; the draw-on reveal hides everything right of the diagonal.
+      int limit = W;
+      if (m == DRAWON) limit = constrain(reveal - y + 1, 0, W);
+
+      // Source column is x - dx, clamped to the image. Split into three spans so the hot loop needs no clamp.
+      int lo = constrain(dx, 0, W), hi = constrain(W + dx, 0, W);  // [lo, hi) maps inside the image
+      size_t base = (size_t)y * W;
+      int x = 0;
+      for (; x < min(lo, limit); x++) {  // left of the image: clamp to column 0
+        bool on = mask[base >> 3] & (0x80 >> (base & 7));
+        row[x] = on ? (m == RAINBOW ? rainbowRow[x] : pencil) : offColor;
+      }
+      for (; x < min(hi, limit); x++) {
+        size_t i = base + x - dx;
+        bool on = mask[i >> 3] & (0x80 >> (i & 7));
+        row[x] = on ? (m == RAINBOW ? rainbowRow[x] : pencil) : offColor;
+      }
+      for (; x < limit; x++) {  // right of the image: clamp to the last column
+        size_t i = base + W - 1;
+        bool on = mask[i >> 3] & (0x80 >> (i & 7));
+        row[x] = on ? (m == RAINBOW ? rainbowRow[x] : pencil) : offColor;
+      }
+      for (; x < W; x++) row[x] = offColor;
     }
-    lcd.pushImage(0, y, W, 1, row);
+    lcd.pushImage(0, y0, W, rows, strip);
   }
   lcd.endWrite();
 }
@@ -170,6 +202,7 @@ void setup() {
                       case 3: g = x; b = 1; break; case 4: r = x; b = 1; break; default: r = 1; b = x; }
     hueLut[i] = lcd.color565(r * 255, g * 255, b * 255);
   }
+  for (int i = 0; i < 256; i++) rippleLut[i] = (int8_t)(1.5f * sinf(i * 2 * PI / 256));
   showMessage("Connecting WiFi...");
   if (!LittleFS.begin(true)) Serial.println("LittleFS mount failed");
   startNetwork();
