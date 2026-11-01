@@ -4,6 +4,7 @@
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
 #include <math.h>
+#include <algorithm>
 #include <WaveshareLCD.h>
 #include "secrets.h"
 
@@ -24,9 +25,17 @@ struct Plane {
 static const int MAX_PLANES = 40;
 static Plane planes[MAX_PLANES];
 static int planeCount = 0;
-static uint32_t lastFetch = 0;
-static const uint32_t FETCH_MS = 10000;
+static const uint32_t FETCH_MS = 10000;  // start-to-start interval between fetches
 static const char *status = "starting";
+
+// Fetching (DNS, TLS handshake, download) can take seconds, so it runs in its own task on core 0 and the
+// main loop only draws. planes/planeCount/status are shared and guarded by dataLock; dataVersion bumps
+// after every fetch attempt so loop() knows when to redraw.
+static SemaphoreHandle_t dataLock;
+static volatile uint32_t dataVersion = 0;
+// Kept across fetches so the TLS session / keep-alive connection can be reused.
+static WiFiClientSecure apiClient;
+static HTTPClient apiHttp;
 
 LGFX lcd;
 LGFX_Sprite radar(&lcd);
@@ -36,6 +45,7 @@ static const int LIST_W = 150;     // min width reserved for the list
 static int D, R, CX, CY;           // radar sprite size, radius and centre (sprite coords)
 static int RADAR_Y;                // top of the radar sprite on screen
 static int LIST_X, MAX_ROWS;
+static int LIST_CHARS;             // characters that fit in the list column (6 px per char)
 
 void connectWifi() {
   WiFi.mode(WIFI_STA);
@@ -48,7 +58,11 @@ void connectWifi() {
 // Approximate location from the public IP via ipwho.is (no key). City-level accuracy only.
 bool geolocate() {
   WiFiClientSecure client;
-  client.setInsecure();  // demo only: skips TLS certificate validation
+#ifdef GEO_ROOT_CA
+  client.setCACert(GEO_ROOT_CA);
+#else
+  client.setInsecure();  // demo only: define GEO_ROOT_CA in secrets.h to validate the certificate
+#endif
   HTTPClient http;
   if (!http.begin(client, "https://ipwho.is/?fields=success,latitude,longitude,city")) return false;
   http.setTimeout(8000);
@@ -63,33 +77,38 @@ bool geolocate() {
   return true;
 }
 
-bool fetchPlanes() {
-  if (WiFi.status() != WL_CONNECTED) { connectWifi(); if (WiFi.status() != WL_CONNECTED) { status = "no wifi"; return false; } }
-  WiFiClientSecure client;
-  client.setInsecure();  // demo only: skips TLS certificate validation
-  HTTPClient http;
+// Download and parse into `out`; returns the plane count, or -1 on failure (with `err` set).
+static int fetchInto(Plane *out, const char *&err) {
+  if (WiFi.status() != WL_CONNECTED) { connectWifi(); if (WiFi.status() != WL_CONNECTED) { err = "no wifi"; return -1; } }
   char url[128];
   snprintf(url, sizeof url, "https://api.adsb.lol/v2/point/%.4f/%.4f/%d", homeLat, homeLon, RANGE_NM);
-  if (!http.begin(client, url)) { status = "http err"; return false; }
-  http.setTimeout(8000);
-  int code = http.GET();
-  if (code != 200) { Serial.printf("HTTP %d\n", code); status = "api error"; http.end(); return false; }
+  apiHttp.setReuse(true);  // keep the connection open between fetches to skip the TLS handshake
+  if (!apiHttp.begin(apiClient, url)) { err = "http err"; return -1; }
+  apiHttp.setTimeout(8000);
+  int code = apiHttp.GET();
+  if (code != 200) {
+    Serial.printf("HTTP %d\n", code);
+    apiHttp.end();
+    apiClient.stop();
+    err = "api error";
+    return -1;
+  }
 
   JsonDocument filter;
   JsonObject f = filter["ac"].add<JsonObject>();
   f["flight"] = true; f["lat"] = true; f["lon"] = true;
   f["alt_baro"] = true; f["track"] = true;
   JsonDocument doc;
-  DeserializationError err = deserializeJson(doc, http.getStream(), DeserializationOption::Filter(filter));
-  http.end();
-  if (err) { Serial.println(err.c_str()); status = "json err"; return false; }
+  DeserializationError de = deserializeJson(doc, apiHttp.getStream(), DeserializationOption::Filter(filter));
+  apiHttp.end();
+  if (de) { Serial.println(de.c_str()); apiClient.stop(); err = "json err"; return -1; }
 
-  planeCount = 0;
+  int n = 0;
   const float kx = cosf(homeLat * DEG_TO_RAD) * 60.0f;
   for (JsonObject ac : doc["ac"].as<JsonArray>()) {
-    if (planeCount >= MAX_PLANES) break;
+    if (n >= MAX_PLANES) break;
     if (ac["lat"].isNull() || ac["lon"].isNull()) continue;
-    Plane &p = planes[planeCount];
+    Plane &p = out[n];
     p.dx = ((float)ac["lon"] - homeLon) * kx;
     p.dy = ((float)ac["lat"] - homeLat) * 60.0f;
     p.dist = sqrtf(p.dx * p.dx + p.dy * p.dy);
@@ -99,13 +118,35 @@ bool fetchPlanes() {
     strlcpy(p.call, cs, sizeof p.call);
     for (int i = strlen(p.call) - 1; i >= 0 && p.call[i] == ' '; i--) p.call[i] = 0;
     if (!p.call[0]) strcpy(p.call, "------");
-    planeCount++;
+    n++;
   }
   // nearest first
-  for (int i = 1; i < planeCount; i++)
-    for (int j = i; j > 0 && planes[j].dist < planes[j - 1].dist; j--) std::swap(planes[j], planes[j - 1]);
-  status = "live";
-  return true;
+  std::sort(out, out + n, [](const Plane &a, const Plane &b) { return a.dist < b.dist; });
+  return n;
+}
+
+static void fetchTask(void *) {
+  static Plane tmp[MAX_PLANES];
+#ifdef API_ROOT_CA
+  apiClient.setCACert(API_ROOT_CA);
+#else
+  apiClient.setInsecure();  // demo only: define API_ROOT_CA in secrets.h to validate the certificate
+#endif
+  uint32_t next = millis();
+  for (;;) {
+    const char *err = nullptr;
+    int n = fetchInto(tmp, err);
+    xSemaphoreTake(dataLock, portMAX_DELAY);
+    if (n >= 0) { memcpy(planes, tmp, n * sizeof(Plane)); planeCount = n; status = "live"; }
+    else status = err;  // keep showing the last good data
+    dataVersion++;
+    xSemaphoreGive(dataLock);
+    // Fixed cadence measured from the start of this fetch, not drifting by however long it took.
+    next += FETCH_MS;
+    int32_t wait = (int32_t)(next - millis());
+    if (wait < 0) { next = millis(); wait = 0; }
+    vTaskDelay(pdMS_TO_TICKS(wait));
+  }
 }
 
 uint16_t altColor(int alt) {
@@ -140,17 +181,25 @@ void drawRadar() {
   radar.pushSprite(0, RADAR_Y);
 }
 
+// Draws each row with a background colour and fixed-width padding instead of blanking the whole panel
+// first, so the list doesn't flash on every update. Only rows left over from a longer previous list are cleared.
 void drawList() {
-  lcd.fillRect(LIST_X - 2, 0, lcd.width() - LIST_X + 2, lcd.height(), TFT_BLACK);
+  static int prevRows = 0;
+  char line[40];
   lcd.setTextSize(1);
   lcd.setTextColor(TFT_WHITE, TFT_BLACK);
   lcd.setCursor(LIST_X, 2);
-  lcd.printf("%d ac  %dnm  [%s]", planeCount, RANGE_NM, status);
-  for (int i = 0; i < planeCount && i < MAX_ROWS; i++) {
+  snprintf(line, sizeof line, "%d ac  %dnm  [%s]", planeCount, RANGE_NM, status);
+  lcd.printf("%-*s", LIST_CHARS, line);
+  int rows = min(planeCount, MAX_ROWS);
+  for (int i = 0; i < rows; i++) {
     lcd.setTextColor(altColor(planes[i].alt), TFT_BLACK);
     lcd.setCursor(LIST_X, 18 + i * 12);
-    lcd.printf("%-8s %5dft %3.0fnm", planes[i].call, planes[i].alt, planes[i].dist);
+    snprintf(line, sizeof line, "%-8s %5dft %3.0fnm", planes[i].call, planes[i].alt, planes[i].dist);
+    lcd.printf("%-*s", LIST_CHARS, line);
   }
+  if (prevRows > rows) lcd.fillRect(LIST_X, 18 + rows * 12, lcd.width() - LIST_X, (prevRows - rows) * 12, TFT_BLACK);
+  prevRows = rows;
 }
 
 void setup() {
@@ -165,6 +214,7 @@ void setup() {
   RADAR_Y = (lcd.height() - D) / 2;
   LIST_X = D + 4;
   MAX_ROWS = (lcd.height() - 18) / 12;
+  LIST_CHARS = (lcd.width() - LIST_X) / 6;
   radar.setColorDepth(16);
   radar.createSprite(D, D);
   radar.setTextDatum(top_left);
@@ -175,14 +225,18 @@ void setup() {
   if (!geolocate()) Serial.println("Geolocation failed, using HOME_LAT/HOME_LON");
 #endif
   lcd.fillScreen(TFT_BLACK);
+  dataLock = xSemaphoreCreateMutex();
+  xTaskCreatePinnedToCore(fetchTask, "fetch", 16384, nullptr, 1, nullptr, 0);
 }
 
 void loop() {
-  if (lastFetch == 0 || millis() - lastFetch > FETCH_MS) {
-    lastFetch = millis();
-    fetchPlanes();
+  static uint32_t drawnVersion = 0;
+  if (dataVersion != drawnVersion) {
+    xSemaphoreTake(dataLock, portMAX_DELAY);
+    drawnVersion = dataVersion;
     drawRadar();
     drawList();
+    xSemaphoreGive(dataLock);
   }
   delay(50);
 }

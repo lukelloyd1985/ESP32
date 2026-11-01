@@ -2,13 +2,17 @@
 #include <WaveshareLCD.h>
 
 // Pac-Man chasing dots across a landscape display, with a ghost in pursuit. Sizes scale to the screen.
-// Frames are drawn into an off-screen sprite and pushed at once to avoid flicker.
+// Frames are drawn into an off-screen sprite and pushed at once to avoid flicker. The maze and dots live in a
+// second, corridor-sized sprite that is drawn once per run; each frame just copies it over the canvas and
+// draws Pac-Man and the ghost on top (eaten dots are erased from it as they go).
 
 LGFX lcd;
 LGFX_Sprite canvas(&lcd);
+LGFX_Sprite lane(&canvas);  // maze + dots, just the corridor band
 
 static int W, H;                   // screen size after rotation, set in setup()
 static int LANE_Y, DOT_GAP, PAC_R; // derived from the screen height
+static int LANE_TOP, LANE_H, LANE_MID; // corridor band on screen, and its centre line inside the lane sprite
 static const int MAX_DOTS = 64;
 static const uint16_t BLUE = 0x001F;
 static const uint16_t PAC_YELLOW = 0xFFE0;
@@ -19,16 +23,23 @@ bool dots[MAX_DOTS];
 int numDots;
 uint32_t frame = 0;
 
+void drawMaze() {
+  int hh = PAC_R * 2;  // half height of the corridor
+  lane.drawRoundRect(2, LANE_MID - hh, W - 4, 2 * hh, 10, BLUE);
+  lane.drawRoundRect(5, LANE_MID - hh + 3, W - 10, 2 * hh - 6, 8, BLUE);
+}
+
+int dotX(int i) { return i * DOT_GAP + 10; }
+int dotRadius(int i) { return i % 8 == 0 ? 5 : 2; }
+
+// Start a new run: all dots back, and the lane sprite redrawn with the maze and every dot.
 void resetRun() {
   pacX = -PAC_R;
   ghostX = -PAC_R - 4 * PAC_R;
   for (auto &d : dots) d = true;
-}
-
-void drawMaze() {
-  int hh = PAC_R * 2;  // half height of the corridor
-  canvas.drawRoundRect(2, LANE_Y - hh, W - 4, 2 * hh, 10, BLUE);
-  canvas.drawRoundRect(5, LANE_Y - hh + 3, W - 10, 2 * hh - 6, 8, BLUE);
+  lane.fillScreen(TFT_BLACK);
+  drawMaze();
+  for (int i = 0; i < numDots; i++) lane.fillCircle(dotX(i), LANE_MID, dotRadius(i), TFT_WHITE);
 }
 
 void drawPacman(int x, int y, int r, int mouth /*0..45 degrees*/) {
@@ -64,6 +75,12 @@ void setup() {
   numDots = min(W / DOT_GAP + 2, MAX_DOTS);
   canvas.setColorDepth(16);
   canvas.createSprite(W, H);
+  canvas.fillScreen(TFT_BLACK);  // everything outside the corridor stays black, so this is the only full clear
+  LANE_TOP = LANE_Y - PAC_R * 2;
+  LANE_H = PAC_R * 4 + 1;
+  LANE_MID = PAC_R * 2;
+  lane.setColorDepth(16);
+  lane.createSprite(W, LANE_H);
   resetRun();
 }
 
@@ -76,17 +93,17 @@ void loop() {
 
   // eat dots
   for (int i = 0; i < numDots; i++)
-    if (dots[i] && i * DOT_GAP + 10 < pacX) dots[i] = false;
+    if (dots[i] && dotX(i) < pacX) {
+      dots[i] = false;
+      lane.fillCircle(dotX(i), LANE_MID, dotRadius(i), TFT_BLACK);
+    }
 
   // loop once both have left the screen
   if (ghostX - PAC_R > W) {
     resetRun();
   }
 
-  canvas.fillScreen(TFT_BLACK);
-  drawMaze();
-  for (int i = 0; i < numDots; i++)
-    if (dots[i]) canvas.fillCircle(i * DOT_GAP + 10, LANE_Y, i % 8 == 0 ? 5 : 2, TFT_WHITE);
+  lane.pushSprite(&canvas, 0, LANE_TOP);  // overwrites the whole corridor, erasing last frame's sprites
 
   int mouth = abs((int)(frame % 12) - 6) * 7;  // opens and closes
   drawPacman((int)pacX, LANE_Y, PAC_R, mouth);
