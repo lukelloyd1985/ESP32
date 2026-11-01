@@ -4,6 +4,7 @@
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
 #include <math.h>
+#include <algorithm>
 #include <WaveshareLCD.h>
 #include "secrets.h"
 
@@ -44,6 +45,7 @@ static const int LIST_W = 150;     // min width reserved for the list
 static int D, R, CX, CY;           // radar sprite size, radius and centre (sprite coords)
 static int RADAR_Y;                // top of the radar sprite on screen
 static int LIST_X, MAX_ROWS;
+static int LIST_CHARS;             // characters that fit in the list column (6 px per char)
 
 void connectWifi() {
   WiFi.mode(WIFI_STA);
@@ -56,7 +58,11 @@ void connectWifi() {
 // Approximate location from the public IP via ipwho.is (no key). City-level accuracy only.
 bool geolocate() {
   WiFiClientSecure client;
-  client.setInsecure();  // demo only: skips TLS certificate validation
+#ifdef GEO_ROOT_CA
+  client.setCACert(GEO_ROOT_CA);
+#else
+  client.setInsecure();  // demo only: define GEO_ROOT_CA in secrets.h to validate the certificate
+#endif
   HTTPClient http;
   if (!http.begin(client, "https://ipwho.is/?fields=success,latitude,longitude,city")) return false;
   http.setTimeout(8000);
@@ -115,14 +121,17 @@ static int fetchInto(Plane *out, const char *&err) {
     n++;
   }
   // nearest first
-  for (int i = 1; i < n; i++)
-    for (int j = i; j > 0 && out[j].dist < out[j - 1].dist; j--) std::swap(out[j], out[j - 1]);
+  std::sort(out, out + n, [](const Plane &a, const Plane &b) { return a.dist < b.dist; });
   return n;
 }
 
 static void fetchTask(void *) {
   static Plane tmp[MAX_PLANES];
-  apiClient.setInsecure();  // demo only: skips TLS certificate validation
+#ifdef API_ROOT_CA
+  apiClient.setCACert(API_ROOT_CA);
+#else
+  apiClient.setInsecure();  // demo only: define API_ROOT_CA in secrets.h to validate the certificate
+#endif
   uint32_t next = millis();
   for (;;) {
     const char *err = nullptr;
@@ -172,17 +181,25 @@ void drawRadar() {
   radar.pushSprite(0, RADAR_Y);
 }
 
+// Draws each row with a background colour and fixed-width padding instead of blanking the whole panel
+// first, so the list doesn't flash on every update. Only rows left over from a longer previous list are cleared.
 void drawList() {
-  lcd.fillRect(LIST_X - 2, 0, lcd.width() - LIST_X + 2, lcd.height(), TFT_BLACK);
+  static int prevRows = 0;
+  char line[40];
   lcd.setTextSize(1);
   lcd.setTextColor(TFT_WHITE, TFT_BLACK);
   lcd.setCursor(LIST_X, 2);
-  lcd.printf("%d ac  %dnm  [%s]", planeCount, RANGE_NM, status);
-  for (int i = 0; i < planeCount && i < MAX_ROWS; i++) {
+  snprintf(line, sizeof line, "%d ac  %dnm  [%s]", planeCount, RANGE_NM, status);
+  lcd.printf("%-*s", LIST_CHARS, line);
+  int rows = min(planeCount, MAX_ROWS);
+  for (int i = 0; i < rows; i++) {
     lcd.setTextColor(altColor(planes[i].alt), TFT_BLACK);
     lcd.setCursor(LIST_X, 18 + i * 12);
-    lcd.printf("%-8s %5dft %3.0fnm", planes[i].call, planes[i].alt, planes[i].dist);
+    snprintf(line, sizeof line, "%-8s %5dft %3.0fnm", planes[i].call, planes[i].alt, planes[i].dist);
+    lcd.printf("%-*s", LIST_CHARS, line);
   }
+  if (prevRows > rows) lcd.fillRect(LIST_X, 18 + rows * 12, lcd.width() - LIST_X, (prevRows - rows) * 12, TFT_BLACK);
+  prevRows = rows;
 }
 
 void setup() {
@@ -197,6 +214,7 @@ void setup() {
   RADAR_Y = (lcd.height() - D) / 2;
   LIST_X = D + 4;
   MAX_ROWS = (lcd.height() - 18) / 12;
+  LIST_CHARS = (lcd.width() - LIST_X) / 6;
   radar.setColorDepth(16);
   radar.createSprite(D, D);
   radar.setTextDatum(top_left);

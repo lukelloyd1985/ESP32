@@ -14,6 +14,6 @@ Display pins / troubleshooting are in `../ESP32-S3-LCD-Boards`.
 Uncomment `#define USE_AUTO_LOCATION` in `secrets.h` to take the centre from your public IP (via ipwho.is) instead of `HOME_LAT`/`HOME_LON`. This is IP geolocation, not a WiFi-scan lookup, so it is only city-level accurate and can be off by tens of km (or point at your ISP's location). If the lookup fails it falls back to the fixed coordinates.
 
 ## Notes
-- TLS certificate validation is disabled (`setInsecure()`) to keep the demo simple. Pin the CA cert for anything real.
+- TLS certificate validation is disabled (`setInsecure()`) by default to keep the demo simple. Define `API_ROOT_CA` (and `GEO_ROOT_CA` if using auto location) in `secrets.h` with the host's root CA PEM to validate certificates.
 - Not tested on hardware; if the API shape changes, check the serial monitor for HTTP/JSON errors.
 - Ideas: landscape layout, touch-less button (GPIO0) to change range, RGB LED (GPIO38) flash on new aircraft.
